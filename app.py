@@ -21,7 +21,8 @@ def load_env_and_create_supabase() -> Client:
 supabase: Client = load_env_and_create_supabase()
 
 app = Flask(__name__)
-CORS(app)
+# Enable CORS for all origins (required for Vercel deployment)
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 
 
 @app.route("/")
