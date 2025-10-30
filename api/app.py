@@ -14,7 +14,10 @@ def load_env_and_create_supabase() -> Client:
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_ANON_KEY")
     if not url or not key:
-        raise RuntimeError("Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables")
+        print("⚠️  WARNING: Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables")
+        print("⚠️  Data upload/download features will not work")
+        print("⚠️  Please set these variables in Vercel dashboard: Settings > Environment Variables")
+        return None
     return create_client(url, key)
 
 
@@ -25,28 +28,64 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 
 
+def serve_html_file(filename):
+    """Helper function to serve HTML files from root directory"""
+    try:
+        # Get the parent directory (project root) from api folder
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        file_path = os.path.join(base_dir, filename)
+        
+        # Check if file exists
+        if os.path.exists(file_path):
+            # Try send_file first
+            try:
+                return send_file(file_path)
+            except:
+                # Fallback: read and return content directly
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return content, 200, {'Content-Type': 'text/html'}
+        else:
+            app.logger.error(f"File not found: {file_path}")
+            return jsonify({"error": "File not found", "path": filename}), 404
+    except Exception as e:
+        app.logger.error(f"Error serving {filename}: {e}")
+        return jsonify({"error": "Server error", "details": str(e)}), 500
+
+
 @app.route("/")
 def index():
     """Serve the login page"""
-    return send_file("login.html")
+    return serve_html_file("login.html")
 
 
 @app.route("/dashboard.html")
 def dashboard():
     """Serve the dashboard page"""
-    return send_file("dashboard.html")
+    return serve_html_file("dashboard.html")
 
 
 @app.route("/login.html")
 def login_page():
     """Serve the login page"""
-    return send_file("login.html")
+    return serve_html_file("login.html")
 
 
 @app.route("/favicon.ico")
 def favicon():
     """Serve favicon"""
-    return send_file("public/favicon.ico", mimetype='image/x-icon')
+    try:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        favicon_path = os.path.join(base_dir, "public", "favicon.ico")
+        
+        if os.path.exists(favicon_path):
+            return send_file(favicon_path, mimetype='image/x-icon')
+        else:
+            # Return 204 No Content for missing favicon
+            return '', 204
+    except Exception as e:
+        app.logger.error(f"Error serving favicon: {e}")
+        return '', 204
 
 
 @app.post("/login")
@@ -80,6 +119,13 @@ def login():
 @app.get("/data")
 def get_data():
     """Fetch CSV data from Supabase Storage and return as JSON"""
+    # Check if Supabase is configured
+    if supabase is None:
+        return jsonify({
+            "success": False,
+            "message": "Supabase not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
+        }), 503
+    
     data_rows = []
     
     # Try to download from Supabase
@@ -123,6 +169,13 @@ def get_data():
 @app.post("/upload")
 def upload():
     """Upload sensor data directly to Supabase Storage CSV (cloud-only, no local file)"""
+    # Check if Supabase is configured
+    if supabase is None:
+        return jsonify({
+            "success": False,
+            "message": "Supabase not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
+        }), 503
+    
     payload = request.get_json(silent=True) or {}
 
     device_id = (payload.get("device_id") or "").strip()
