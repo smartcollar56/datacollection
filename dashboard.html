@@ -597,7 +597,7 @@
       <div class="table-card">
         <div class="table-header">
           <div class="table-title">Sensor Data</div>
-          <div class="table-subtitle">Showing latest 20 readings</div>
+          <div class="table-subtitle">Showing all readings</div>
         </div>
         <div class="table-wrapper">
           <table>
@@ -741,23 +741,42 @@
     // Update date filter
     function updateDateFilter(data) {
       const dateFilter = document.getElementById('dateFilter');
-      const dates = {};
+      const uniqueDates = new Set();
       
+      // Get today's date string for comparison
+      const today = new Date();
+      const todayYear = today.getFullYear();
+      const todayMonth = String(today.getMonth() + 1).padStart(2, '0');
+      const todayDay = String(today.getDate()).padStart(2, '0');
+      const todayDateStr = `${todayYear}-${todayMonth}-${todayDay}`;
+      
+      // Extract unique dates (normalize to local date string YYYY-MM-DD)
       data.forEach(d => {
         const date = new Date(d.timestamp);
-        const dateStr = date.toISOString().split('T')[0];
-        const displayDate = date.toLocaleDateString();
-        dates[dateStr] = displayDate;
+        // Create a date string in local timezone to avoid timezone issues
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const localDateStr = `${year}-${month}-${day}`;
+        uniqueDates.add(localDateStr);
       });
       
-      const sortedDates = Object.keys(dates).sort().reverse();
+      // Sort dates in descending order (most recent first)
+      const sortedDates = Array.from(uniqueDates).sort().reverse();
       const currentValue = dateFilter.value;
       
       dateFilter.innerHTML = '<option value="today">Today</option>';
       sortedDates.forEach(dateStr => {
+        // Skip today's date since we already have "Today" option
+        if (dateStr === todayDateStr) {
+          return;
+        }
+        
         const option = document.createElement('option');
         option.value = dateStr;
-        option.textContent = dates[dateStr];
+        // Format display as DD.MM.YYYY
+        const [year, month, day] = dateStr.split('-');
+        option.textContent = `${day}.${month}.${year}`;
         dateFilter.appendChild(option);
       });
       
@@ -786,12 +805,16 @@
           return timestamp >= today && timestamp < tomorrow;
         });
       } else {
-        const selectedDateObj = new Date(selectedDate);
-        const nextDay = new Date(selectedDateObj);
-        nextDay.setDate(nextDay.getDate() + 1);
+        // Parse the selected date string (YYYY-MM-DD format)
+        const [year, month, day] = selectedDate.split('-').map(Number);
+        const selectedDateObj = new Date(year, month - 1, day, 0, 0, 0, 0);
+        const nextDay = new Date(year, month - 1, day + 1, 0, 0, 0, 0);
+        
         filtered = filtered.filter(d => {
           const timestamp = new Date(d.timestamp);
-          return timestamp >= selectedDateObj && timestamp < nextDay;
+          // Normalize timestamp to local date for comparison
+          const localDate = new Date(timestamp.getFullYear(), timestamp.getMonth(), timestamp.getDate(), 0, 0, 0, 0);
+          return localDate.getTime() === selectedDateObj.getTime();
         });
       }
       
@@ -828,8 +851,9 @@
         return;
       }
 
-      const latest20 = data.slice(-20).reverse();
-      tbody.innerHTML = latest20.map(row => {
+      // Show all readings (most recent first)
+      const allReadings = [...data].reverse();
+      tbody.innerHTML = allReadings.map(row => {
         const date = new Date(row.timestamp);
         return `<tr>
           <td>${date.toLocaleString()}</td>

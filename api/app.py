@@ -1,5 +1,6 @@
 import os
 import csv
+import time
 from datetime import datetime
 from typing import Any, Dict
 
@@ -168,7 +169,7 @@ def get_data():
 
 @app.post("/upload")
 def upload():
-    """Upload sensor data directly to Supabase Storage CSV (cloud-only, no local file)"""
+    """Upload sensor data directly to Supabase Storage CSV (single row only)"""
     # Check if Supabase is configured
     if supabase is None:
         return jsonify({
@@ -205,36 +206,71 @@ def upload():
 
     # Download existing CSV from Supabase
     bucket = os.getenv("SUPABASE_BUCKET", "datacollection")
+    file_exists = False
+    existing_csv = ""
+    
     try:
         response = supabase.storage.from_(bucket).download("data.csv")
         existing_csv = response.decode("utf-8") if response else ""
+        file_exists = True
+        
+        # Count existing rows (excluding header)
+        existing_lines = [line.strip() for line in existing_csv.split('\n') if line.strip()]
+        existing_row_count = len(existing_lines) - 1 if existing_lines else 0  # -1 for header
+        print(f"📊 Current CSV has {existing_row_count} data rows (plus header)")
+        
     except Exception as e:
-        print(f"No existing CSV, creating new: {e}")
+        print(f"ℹ️  No existing CSV, will create new file: {e}")
         existing_csv = "timestamp,device_id,temperature,gyro_x,gyro_y,gyro_z\n"
+        existing_row_count = 0
+        file_exists = False
     
-    # Append new row
-    new_row = f"{timestamp_str},{device_id},{temperature},{gyro_x},{gyro_y},{gyro_z}\n"
-    updated_csv = existing_csv + new_row
+    # Append new row (ensure existing CSV ends with newline)
+    if existing_csv and not existing_csv.endswith('\n'):
+        existing_csv += '\n'
     
-    # Upload back to Supabase
-    try:
-        supabase.storage.from_(bucket).upload(
-            file=updated_csv.encode('utf-8'),
-            path="data.csv",
-            file_options={
-                "content-type": "text/csv",
-                "x-upsert": "true",
-                "cache-control": "no-cache"
-            }
-        )
-        print(f"✓ Data appended to Supabase Storage (device: {device_id})")
-        return jsonify({"success": True, "message": "Data uploaded to cloud"}), 200
-    except Exception as e:
-        print(f"❌ Failed to upload to Supabase: {e}")
-        return jsonify({"success": False, "message": str(e)}), 500
+    new_row = f"{timestamp_str},{device_id},{temperature},{gyro_x},{gyro_y},{gyro_z}"
+    updated_csv = existing_csv + new_row + '\n'
+    expected_row_count = existing_row_count + 1
+    
+    print(f"📤 Uploading: {existing_row_count} rows → {expected_row_count} rows (adding {device_id})")
+    
+    # Upload back to Supabase with simple retry
+    max_attempts = 3
+    expected_row = new_row
+    
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # Step 1: Upload the data (ALWAYS use upload with upsert)
+            # This overwrites the file atomically
+            supabase.storage.from_(bucket).upload(
+                file=updated_csv.encode('utf-8'),
+                path="data.csv",
+                file_options={
+                    "content-type": "text/csv",
+                    "cache-control": "no-cache",
+                    "upsert": "true"  # Allow overwriting
+                }
+            )
+            print(f"✓ Data uploaded to Supabase Storage (device: {device_id})")
+            return jsonify({"success": True, "message": "Data uploaded to cloud"}), 200
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Upload attempt {attempt}/{max_attempts} failed: {error_msg}")
+            
+            if attempt < max_attempts:
+                retry_delay = 1.0 * attempt
+                print(f"⏳ Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                print(f"❌ Failed to upload after {max_attempts} attempts: {error_msg}")
+                return jsonify({"success": False, "message": f"Upload failed: {error_msg}"}), 500
+    
+    return jsonify({"success": False, "message": "Upload failed"}), 500
 
 
 #if __name__ == "__main__":
-#   app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+ #   app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
 
 
